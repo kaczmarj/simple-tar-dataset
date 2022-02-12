@@ -1,4 +1,3 @@
-from lib2to3.pgen2.token import OP
 import tarfile
 from io import BytesIO
 from typing import Dict, Optional, List

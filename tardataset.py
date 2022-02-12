@@ -1,12 +1,15 @@
+from lib2to3.pgen2.token import OP
 import tarfile
 from io import BytesIO
+from typing import Dict, Optional, List
+
 from PIL import Image, ImageFile
 
 from torch.utils.data import Dataset, get_worker_info
 
 try:  # make torchvision optional
     from torchvision.transforms.functional import to_tensor
-except:
+except Exception:
     to_tensor = None
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -27,6 +30,9 @@ class TarDataset(Dataset):
         Example: lambda m: m.isfile() and m.name.endswith('.png')
       transform (callable): Function applied to each image by __getitem__ (see
         torchvision.transforms). Default: ToTensor (convert PIL image to tensor).
+      members_by_name (dict str:TarInfo): All members of the tar file.
+      samples (list of str): Valid files within the tar file. These must be a subset of
+        the keys of members_by_name.
 
     Attributes:
       members_by_name (dict): Members (files and folders) found in the Tar archive,
@@ -43,6 +49,8 @@ class TarDataset(Dataset):
         transform=to_tensor,
         extensions=(".png", ".jpg", ".jpeg"),
         is_valid_file=None,
+        members_by_name: Optional[Dict[str, tarfile.TarInfo]] = None,
+        samples: Optional[List[str]] = None,
     ):
         if not isinstance(archive, TarDataset):
             # open tar file. in a multiprocessing setting (e.g. DataLoader workers), we
@@ -54,9 +62,17 @@ class TarDataset(Dataset):
             self.tar_obj = {worker: tarfile.open(archive)}
             self.archive = archive
 
-            # store headers of all files and folders by name
-            members = sorted(self.tar_obj[worker].getmembers(), key=lambda m: m.name)
-            self.members_by_name = {m.name: m for m in members}
+            if members_by_name is not None:
+                assert all(
+                    isinstance(k, tarfile.TarInfo) for k in members_by_name.values()
+                ), "members_by_name values must be tarfile.TarInfo instances"
+                self.members_by_name = members_by_name
+            else:
+                # store headers of all files and folders by name
+                members = sorted(
+                    self.tar_obj[worker].getmembers(), key=lambda m: m.name
+                )
+                self.members_by_name = {m.name: m for m in members}
         else:
             # passed a TarDataset into the constructor, reuse the same tar contents.
             # no need to copy explicitly since this dict will not be modified again.
@@ -65,7 +81,12 @@ class TarDataset(Dataset):
             self.tar_obj = {}  # will get filled by get_file on first access
 
         # also store references to the iterated samples (a subset of the above)
-        self.filter_samples(is_valid_file, extensions)
+        if samples is not None:
+            assert members_by_name is not None, "must provide members_by_name"
+            assert len(samples) <= len(self.members_by_name)
+            self.samples = samples
+        else:
+            self.filter_samples(is_valid_file, extensions)
 
         self.transform = transform
 
